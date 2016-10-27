@@ -1,5 +1,9 @@
 import com.optionscity.freeway.api.*;
 import com.optionscity.freeway.api.messages.MarketBidAskMessage;
+import com.sun.javafx.collections.MappingChange;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Created by demo01 on 10/18/2016.
@@ -8,12 +12,12 @@ public class ProjectedPrice extends AbstractJob {
 
     String instrumentID;
     private double minEdge = 5;
-    private double wam;
+    private Map<String, Double> wamMap = new HashMap<>();
     private int orderQty;
 
 
     public void install (IJobSetup setup){
-        setup.addVariable("Instrument", "Instrument to use", "instrument", "");
+        setup.addVariable("Instruments", "Instruments to use", "instruments", "");
         setup.addVariable("Min Edge", "Min Edge Threshold", "double", "5.0");
         setup.addVariable("Order Qty", "Order Quantity", "int", "0");
             }
@@ -46,6 +50,8 @@ public class ProjectedPrice extends AbstractJob {
         double askQty = topOfBook.ask_size;
 
         wam = ((bidPrice * bidQty) + (askPrice * askQty)) / (bidQty + askQty);
+        debug("WAM is " + wam);
+
     }
 
     private void placeOrders(String instrumentId) {
