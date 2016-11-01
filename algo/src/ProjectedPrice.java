@@ -1,9 +1,9 @@
 import com.optionscity.freeway.api.*;
 import com.optionscity.freeway.api.messages.MarketBidAskMessage;
-import com.sun.javafx.collections.MappingChange;
+import com.optionscity.freeway.api.messages.TradeMessage;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Created by demo01 on 10/18/2016.
@@ -12,7 +12,11 @@ public class ProjectedPrice extends AbstractJob {
 
     String instrumentID;
     private double minEdge = 5;
-    private Map<String, Double> wamMap = new HashMap<>();
+    //private Map<String, Double> wamMap = new HashMap<>();
+private Set<Long> initialOrderSet;
+private Set<Long> profitTakingOrderSet;
+    private double wam;
+    private double minProfitEdge;
     private int orderQty;
 
 
@@ -26,10 +30,26 @@ public class ProjectedPrice extends AbstractJob {
         if (message.instrumentId == instrumentID) {
             log("received market bid/ask for" + message.instrumentId);
             updateWam(message.instrumentId);
-            cancelOrdersIfViolatesEdge(message.instrumentId);
-            placeOrders(message.instrumentId);
+            cancelInitialOrdersIfViolatesEdge(message.instrumentId);
+            placeInitialOrders(message.instrumentId);
         }
     }
+
+    public void onTrade(TradeMessage message) {
+        if (initialOrderSet.contains(message.orderQuoteId)) {
+            double ticksize = 0;
+            Trade trade= trades().getTrade(message.tradeId);
+            long profitOrderID;
+            if (trade.side== Order.Side.SELL) {
+                profitOrderID = orders().submit(new OrderRequest(Order.Type.LIMIT, Order.Side.BUY, instrumentID, (trade.price - ticksize), trade.quantity));
+            } else {
+                profitOrderID = orders().submit(new OrderRequest(Order.Type.LIMIT, Order.Side.SELL, instrumentID, (trade.price + ticksize), trade.quantity));
+            }
+            profitTakingOrderSet.contains(profitOrderID);
+        }
+    }
+
+
 
     public void begin (IContainer container){
         super.begin(container);
@@ -37,8 +57,11 @@ public class ProjectedPrice extends AbstractJob {
         minEdge = getDoubleVar("Min Edge");
         orderQty = getIntVar("Order Qty");
         container.subscribeToMarketBidAskMessages();
+        container.subscribeToTradeMessages();
+        initialOrderSet = new HashSet<>();
+        profitTakingOrderSet = new HashSet<>();
         updateWam(instrumentID);
-        placeOrders(instrumentID);
+        placeInitialOrders(instrumentID);
 
     }
 
@@ -54,33 +77,51 @@ public class ProjectedPrice extends AbstractJob {
 
     }
 
-    private void placeOrders(String instrumentId) {
+    private void placeInitialOrders(String instrumentId) {
         Prices topOfBook = instruments().getTopOfBook(instrumentID);
         if ((wam - topOfBook.bid) >= minEdge) {
             log ("Placing buy order");
             if (!orderAtThisPrice(instrumentId, Order.Side.BUY, topOfBook.bid)) {
-                orders().submit(new OrderRequest(Order.Type.LIMIT, Order.Side.BUY, instrumentId, topOfBook.bid, orderQty));
+                long orderID = orders().submit(new OrderRequest(Order.Type.LIMIT, Order.Side.BUY, instrumentId, topOfBook.bid, orderQty));
+                initialOrderSet.add(orderID);
             }
         }
         if ((topOfBook.ask - wam)>= minEdge) {
             log ("Placing sell order");
             if (!orderAtThisPrice(instrumentId, Order.Side.SELL, topOfBook.ask)) {
-                orders().submit(new OrderRequest(Order.Type.LIMIT, Order.Side.SELL, instrumentId, topOfBook.ask, orderQty));
+                long orderID = orders().submit(new OrderRequest(Order.Type.LIMIT, Order.Side.SELL, instrumentId, topOfBook.ask, orderQty));
+                initialOrderSet.add(orderID);
             }
         }
     }
 
-    private void cancelOrdersIfViolatesEdge(String instrumentId){
-            for (Order order: orders().snapshot()){
+    private void cancelInitialOrdersIfViolatesEdge(String instrumentId){
+            for (Long orderId: initialOrderSet){
+                Order order = orders().getOrder(orderId);
                 boolean isBidLessThanMinEdge = (order.instrumentId == instrumentId) && (order.side == Order.Side.BUY) && (wam - order.bookedPrice < minEdge);
                 boolean isOfferLessThanMinEdge = (order.instrumentId == instrumentId) && (order.side == Order.Side.SELL) && (order.bookedPrice - wam < minEdge);
                 if (isBidLessThanMinEdge || isOfferLessThanMinEdge){
                     log("canceling order " + order);
                     orders().cancel(order.orderId);
                 }
-
-
             }
+    }
+
+    private void cancelProfitTakingOrdersIfViolatesEdge (String instrumentID) {
+            for (Long orderId: profitTakingOrderSet){
+                Order order = orders().getOrder(orderId);
+                boolean isBidScratchLessThanMinProfitEdge = (order.instrumentId == instrumentID) && (order.side == Order.Side.BUY) && (wam - order.bookedPrice > minProfitEdge);
+                boolean isOfferScratchLessThanMinProfitEdge = (order.instrumentId == instrumentID) && (order.side == Order.Side.SELL) && (order.bookedPrice - wam > minProfitEdge);
+                if (isBidScratchLessThanMinProfitEdge){
+                    double minTickSize = 0;
+                    log("scratching order " + order);
+                    orders().modify(order.orderId, order.bookedQuantity, order.bookedPrice + minTickSize);
+            } else if (isOfferScratchLessThanMinProfitEdge) {
+                    double minTickSize = 0;
+                    log("scratching order " + order);
+                    orders().modify(order.orderId, order.bookedQuantity, order.bookedPrice - minTickSize);
+            }
+        }
     }
 
     /**
