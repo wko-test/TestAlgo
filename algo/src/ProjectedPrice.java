@@ -10,6 +10,9 @@ import java.util.Set;
  */
 public class ProjectedPrice extends AbstractJob {
 
+    private final String INITIAL_ORDER_LABEL = "new order";
+    private final String PROFIT_TAKING_ORDER_LABEL = "profit taking order";
+
     String instrumentID;
     private double minEdge = 5;
     //private Map<String, Double> wamMap = new HashMap<>();
@@ -21,13 +24,13 @@ private Set<Long> profitTakingOrderSet;
 
 
     public void install (IJobSetup setup){
-        setup.addVariable("Instruments", "Instruments to use", "instruments", "");
+        setup.addVariable("Instrument", "Instrument to use", "instrument", "");
         setup.addVariable("Min Edge", "Min Edge Threshold", "double", "5.0");
         setup.addVariable("Order Qty", "Order Quantity", "int", "0");
             }
 
     public void onMarketBidAsk(MarketBidAskMessage message) {
-        if (message.instrumentId == instrumentID) {
+        if (message.instrumentId.equals(instrumentID)) {
             log("received market bid/ask for" + message.instrumentId);
             updateWam(message.instrumentId);
             cancelInitialOrdersIfViolatesEdge(message.instrumentId);
@@ -40,10 +43,14 @@ private Set<Long> profitTakingOrderSet;
             double ticksize = 0;
             Trade trade= trades().getTrade(message.tradeId);
             long profitOrderID;
-            if (trade.side== Order.Side.SELL) {
-                profitOrderID = orders().submit(new OrderRequest(Order.Type.LIMIT, Order.Side.BUY, instrumentID, (trade.price - ticksize), trade.quantity));
+            if (trade.side.equals(Order.Side.SELL)) {
+                OrderRequest profitOrder = new OrderRequest(Order.Type.LIMIT, Order.Side.BUY, instrumentID, (trade.price - ticksize), trade.quantity);
+                profitOrder.label = PROFIT_TAKING_ORDER_LABEL;
+                profitOrderID = orders().submit(profitOrder);
             } else {
-                profitOrderID = orders().submit(new OrderRequest(Order.Type.LIMIT, Order.Side.SELL, instrumentID, (trade.price + ticksize), trade.quantity));
+                OrderRequest profitOrder = new OrderRequest(Order.Type.LIMIT, Order.Side.SELL, instrumentID, (trade.price + ticksize), trade.quantity);
+                profitOrder.label = PROFIT_TAKING_ORDER_LABEL;
+                profitOrderID = orders().submit(profitOrder);
             }
             profitTakingOrderSet.contains(profitOrderID);
         }
@@ -80,17 +87,23 @@ private Set<Long> profitTakingOrderSet;
     private void placeInitialOrders(String instrumentId) {
         Prices topOfBook = instruments().getTopOfBook(instrumentID);
         if ((wam - topOfBook.bid) >= minEdge) {
-            log ("Placing buy order");
-            if (!orderAtThisPrice(instrumentId, Order.Side.BUY, topOfBook.bid)) {
+            log ("attmepting to place buy order");
+            if (!liveOrdersAtThisPrice(instrumentId, Order.Side.BUY, topOfBook.bid, INITIAL_ORDER_LABEL)) {
+                OrderRequest initialOrder = new OrderRequest(Order.Type.LIMIT, Order.Side.BUY, instrumentId, topOfBook.bid, orderQty);
+                initialOrder.label = INITIAL_ORDER_LABEL;
                 long orderID = orders().submit(new OrderRequest(Order.Type.LIMIT, Order.Side.BUY, instrumentId, topOfBook.bid, orderQty));
                 initialOrderSet.add(orderID);
+                log ("Placing buy order " + orderID);
             }
         }
         if ((topOfBook.ask - wam)>= minEdge) {
-            log ("Placing sell order");
-            if (!orderAtThisPrice(instrumentId, Order.Side.SELL, topOfBook.ask)) {
-                long orderID = orders().submit(new OrderRequest(Order.Type.LIMIT, Order.Side.SELL, instrumentId, topOfBook.ask, orderQty));
+            log ("attempting to place sell order");
+            if (!liveOrdersAtThisPrice(instrumentId, Order.Side.SELL, topOfBook.ask, INITIAL_ORDER_LABEL)) {
+                OrderRequest initialOrder = new OrderRequest(Order.Type.LIMIT, Order.Side.SELL, instrumentId, topOfBook.ask, orderQty);
+                initialOrder.label = INITIAL_ORDER_LABEL;
+                long orderID = orders().submit(initialOrder);
                 initialOrderSet.add(orderID);
+                log ("Placing sell order " + orderID);
             }
         }
     }
@@ -98,8 +111,8 @@ private Set<Long> profitTakingOrderSet;
     private void cancelInitialOrdersIfViolatesEdge(String instrumentId){
             for (Long orderId: initialOrderSet){
                 Order order = orders().getOrder(orderId);
-                boolean isBidLessThanMinEdge = (order.instrumentId == instrumentId) && (order.side == Order.Side.BUY) && (wam - order.bookedPrice < minEdge);
-                boolean isOfferLessThanMinEdge = (order.instrumentId == instrumentId) && (order.side == Order.Side.SELL) && (order.bookedPrice - wam < minEdge);
+                boolean isBidLessThanMinEdge = (order.instrumentId.equals(instrumentId)) && (order.side.equals(Order.Side.BUY)) && (wam - order.bookedPrice < minEdge);
+                boolean isOfferLessThanMinEdge = (order.instrumentId.equals(instrumentId)) && (order.side.equals(Order.Side.SELL)) && (order.bookedPrice - wam < minEdge);
                 if (isBidLessThanMinEdge || isOfferLessThanMinEdge){
                     log("canceling order " + order);
                     orders().cancel(order.orderId);
@@ -110,15 +123,14 @@ private Set<Long> profitTakingOrderSet;
     private void cancelProfitTakingOrdersIfViolatesEdge (String instrumentID) {
             for (Long orderId: profitTakingOrderSet){
                 Order order = orders().getOrder(orderId);
-                boolean isBidScratchLessThanMinProfitEdge = (order.instrumentId == instrumentID) && (order.side == Order.Side.BUY) && (wam - order.bookedPrice > minProfitEdge);
-                boolean isOfferScratchLessThanMinProfitEdge = (order.instrumentId == instrumentID) && (order.side == Order.Side.SELL) && (order.bookedPrice - wam > minProfitEdge);
+                boolean isBidScratchLessThanMinProfitEdge = (order.instrumentId.equals(instrumentID)) && (order.side.equals(Order.Side.BUY)) && (wam - order.bookedPrice > minProfitEdge);
+                boolean isOfferScratchLessThanMinProfitEdge = (order.instrumentId.equals(instrumentID)) && (order.side.equals(Order.Side.SELL)) && (order.bookedPrice - wam > minProfitEdge);
                 if (isBidScratchLessThanMinProfitEdge){
-                    double minTickSize = 0;
+                    double minTickSize = instruments().getInstrumentDetails(instrumentID).minimumPriceIncrement;
                     log("scratching order " + order);
                     orders().modify(order.orderId, order.bookedQuantity, order.bookedPrice + minTickSize);
             } else if (isOfferScratchLessThanMinProfitEdge) {
-                    double minTickSize = 0;
-                    log("scratching order " + order);
+                    double minTickSize = instruments().getInstrumentDetails(instrumentID).minimumPriceIncrement;
                     orders().modify(order.orderId, order.bookedQuantity, order.bookedPrice - minTickSize);
             }
         }
@@ -131,10 +143,14 @@ private Set<Long> profitTakingOrderSet;
      * @param price
      * @return
      */
-    private boolean orderAtThisPrice(String instrumentID, Order.Side orderSide, double price) {
+    private boolean liveOrdersAtThisPrice(String instrumentID, Order.Side orderSide, double price, String label) {
         for (Order order: orders().snapshot()){
-            if (order.instrumentId.equals(instrumentID) && (order.bookedPrice==price) && (order.side==orderSide))
+            boolean orderIsLive = (order.status.equals(Order.Status.BOOKED)) || (order.status.equals(Order.Status.NEW)) || (order.status.equals(Order.Status.PARTIAL));
+            boolean ordersMatch = order.instrumentId.equals(instrumentID) && (order.bookedPrice==price) && (order.side.equals(orderSide)) && (order.label.equals(label));
+            if (ordersMatch && orderIsLive){
+                debug("found order " + order);
                 return true;
+            }
         }
         return false;
     }
