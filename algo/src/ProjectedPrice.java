@@ -1,5 +1,6 @@
 import com.optionscity.freeway.api.*;
 import com.optionscity.freeway.api.messages.MarketBidAskMessage;
+import com.optionscity.freeway.api.messages.OrderMessage;
 import com.optionscity.freeway.api.messages.TradeMessage;
 
 import java.util.HashSet;
@@ -8,7 +9,10 @@ import java.util.Set;
 /**
  * Created by demo01 on 10/18/2016.
  */
+
 public class ProjectedPrice extends AbstractJob {
+
+    //TODO Make P&L Tracker
 
     private final String INITIAL_ORDER_LABEL = "new order";
     private final String PROFIT_TAKING_ORDER_LABEL = "profit taking order";
@@ -21,6 +25,8 @@ private Set<Long> profitTakingOrderSet;
     private double wam;
     private double minProfitEdge;
     private int orderQty;
+    private IGrid orderGrid;
+
 
 
     public void install (IJobSetup setup){
@@ -56,15 +62,24 @@ private Set<Long> profitTakingOrderSet;
         }
     }
 
-
+    public void onOrder(OrderMessage message) {
+        Order order=orders().getOrder(message.orderId);
+        if (INITIAL_ORDER_LABEL.equals(order.label) || PROFIT_TAKING_ORDER_LABEL.equals(order.label)){
+            orderGrid.set(""+order.orderId, "status", order.status.toString());
+        }
+    }
 
     public void begin (IContainer container){
         super.begin(container);
+        container.addGrid("Orders Grid", new String[]{"status"});
+        orderGrid = container.getGrid("Orders Grid");
+        orderGrid.clear();
         instrumentID= instruments().getInstrumentId(container.getVariable("Instrument"));
         minEdge = getDoubleVar("Min Edge");
         orderQty = getIntVar("Order Qty");
         container.subscribeToMarketBidAskMessages();
         container.subscribeToTradeMessages();
+        container.subscribeToOrderMessages();
         initialOrderSet = new HashSet<>();
         profitTakingOrderSet = new HashSet<>();
         updateWam(instrumentID);
@@ -86,12 +101,13 @@ private Set<Long> profitTakingOrderSet;
 
     private void placeInitialOrders(String instrumentId) {
         Prices topOfBook = instruments().getTopOfBook(instrumentID);
+        //TODO check edge conversion (dec to 32nd) and make sure it is consistent throughout
         if ((wam - topOfBook.bid) >= minEdge) {
             log ("attmepting to place buy order");
             if (!liveOrdersAtThisPrice(instrumentId, Order.Side.BUY, topOfBook.bid, INITIAL_ORDER_LABEL)) {
                 OrderRequest initialOrder = new OrderRequest(Order.Type.LIMIT, Order.Side.BUY, instrumentId, topOfBook.bid, orderQty);
                 initialOrder.label = INITIAL_ORDER_LABEL;
-                long orderID = orders().submit(new OrderRequest(Order.Type.LIMIT, Order.Side.BUY, instrumentId, topOfBook.bid, orderQty));
+                long orderID = orders().submit(initialOrder);
                 initialOrderSet.add(orderID);
                 log ("Placing buy order " + orderID);
             }
@@ -145,8 +161,12 @@ private Set<Long> profitTakingOrderSet;
      */
     private boolean liveOrdersAtThisPrice(String instrumentID, Order.Side orderSide, double price, String label) {
         for (Order order: orders().snapshot()){
-            boolean orderIsLive = (order.status.equals(Order.Status.BOOKED)) || (order.status.equals(Order.Status.NEW)) || (order.status.equals(Order.Status.PARTIAL));
-            boolean ordersMatch = order.instrumentId.equals(instrumentID) && (order.bookedPrice==price) && (order.side.equals(orderSide)) && (order.label.equals(label));
+            debug ("instrumentID is " + order.instrumentId);
+            debug ("booked price is " + order.bookedPrice);
+            debug ("side is " + order.side);
+            debug ("label is " + order.label);
+            boolean orderIsLive = (Order.Status.BOOKED.equals(order.status)) || (Order.Status.NEW.equals(order.status)) || (Order.Status.PARTIAL.equals(order.status));
+            boolean ordersMatch = instrumentID.equals(order.instrumentId) && (order.bookedPrice==price) && (orderSide.equals(order.side)) && (label.equals(order.label));
             if (ordersMatch && orderIsLive){
                 debug("found order " + order);
                 return true;
