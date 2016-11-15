@@ -16,16 +16,24 @@ public class ProjectedPrice extends AbstractJob {
 
     private final String INITIAL_ORDER_LABEL = "new order";
     private final String PROFIT_TAKING_ORDER_LABEL = "profit taking order";
+    private final String SCRATCH_ORDER_LABEL = "scratch order";
 
     String instrumentID;
     private double minEdge = 5;
+
     //private Map<String, Double> wamMap = new HashMap<>();
-private Set<Long> initialOrderSet;
-private Set<Long> profitTakingOrderSet;
+    private Set<Long> initialOrderSet;
+    private Set<Long> profitTakingOrderSet;
+    private Set<Long> scratchingOrderSet;
+
     private double wam;
     private double minProfitEdge;
     private int orderQty;
     private IGrid orderGrid;
+    private IGrid pnlGrid;
+    private double PnL=0.0;
+
+
 
 
 
@@ -58,7 +66,11 @@ private Set<Long> profitTakingOrderSet;
                 profitOrder.label = PROFIT_TAKING_ORDER_LABEL;
                 profitOrderID = orders().submit(profitOrder);
             }
-            profitTakingOrderSet.contains(profitOrderID);
+            profitTakingOrderSet.add(profitOrderID);
+        } else if (profitTakingOrderSet.contains(message.orderQuoteId)) {
+            double minTickSize = instruments().getInstrumentDetails(instrumentID).minimumPriceIncrement;
+            PnL += minTickSize;
+            pnlGrid.set("", "PnL", PnL);
         }
     }
 
@@ -66,12 +78,17 @@ private Set<Long> profitTakingOrderSet;
         Order order=orders().getOrder(message.orderId);
         if (INITIAL_ORDER_LABEL.equals(order.label) || PROFIT_TAKING_ORDER_LABEL.equals(order.label)){
             orderGrid.set(""+order.orderId, "status", order.status.toString());
+            if (!Order.Status.BOOKED.equals(order.status)){
+                orderGrid.remove(""+order.orderId);
+            }
         }
     }
 
     public void begin (IContainer container){
         super.begin(container);
         container.addGrid("Orders Grid", new String[]{"status"});
+        container.addGrid("PnL Grid", new String[]{"PnL"});
+        pnlGrid = container.getGrid("PnL Grid");
         orderGrid = container.getGrid("Orders Grid");
         orderGrid.clear();
         instrumentID= instruments().getInstrumentId(container.getVariable("Instrument"));
@@ -82,6 +99,8 @@ private Set<Long> profitTakingOrderSet;
         container.subscribeToOrderMessages();
         initialOrderSet = new HashSet<>();
         profitTakingOrderSet = new HashSet<>();
+        scratchingOrderSet = new HashSet<>();
+
         updateWam(instrumentID);
         placeInitialOrders(instrumentID);
 
@@ -144,12 +163,17 @@ private Set<Long> profitTakingOrderSet;
                 if (isBidScratchLessThanMinProfitEdge){
                     double minTickSize = instruments().getInstrumentDetails(instrumentID).minimumPriceIncrement;
                     log("scratching order " + order);
+
+                    // Remove from proft taking orders and add to scratching orders
+                    scratchingOrderSet.add(orderId);
+
                     orders().modify(order.orderId, order.bookedQuantity, order.bookedPrice + minTickSize);
             } else if (isOfferScratchLessThanMinProfitEdge) {
                     double minTickSize = instruments().getInstrumentDetails(instrumentID).minimumPriceIncrement;
                     orders().modify(order.orderId, order.bookedQuantity, order.bookedPrice - minTickSize);
             }
         }
+        profitTakingOrderSet.removeAll(scratchingOrderSet);
     }
 
     /**
