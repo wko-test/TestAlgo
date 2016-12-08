@@ -9,7 +9,7 @@ public class ATMvolTracker extends AbstractJob {
     String instrumentID;
     double vol;
     private IGrid atmGrid;
-
+    int n = 1;
 
     public void install(IJobSetup iJobSetup) {
         iJobSetup.addVariable("Instrument", "Instrument to chart vols", "instrument", "");
@@ -19,8 +19,9 @@ public class ATMvolTracker extends AbstractJob {
         super.begin(container);
         container.subscribeToTheoMessages();
         instrumentID = instruments().getInstrumentId(container.getVariable("Instrument"));
-        atmGrid = container.addGrid("Vol Grid", new String[]{"ATM Vol"});
+        atmGrid = container.addGrid("Vol Grid", new String[]{"ATM Vol", "ATM MA-Live"});
         atmGrid=container.getGrid("Vol Grid");
+        atmGrid.clear();
         updateVol(instrumentID);
     }
     public void onTheo(TheoMessage theoMessage){
@@ -30,12 +31,16 @@ public class ATMvolTracker extends AbstractJob {
         }
     }
     private void updateVol( String instrumentID ){
+
         Prices topOfBook = instruments().getTopOfBook(instrumentID);
+        InstrumentDetails details = instruments().getInstrumentDetails(instrumentID);
+        String underlyingID = details.underlyingId;
+        Prices undTopOfBook = instruments().getTopOfBook(underlyingID);
         double bidPrice = topOfBook.bid;
         double askPrice = topOfBook.ask;
         double optPrice;
-        double undBidPrice = topOfBook.underlying_bid;
-        double undAskPrice = topOfBook.underlying_ask;
+        double undBidPrice = undTopOfBook.bid;
+        double undAskPrice = undTopOfBook.ask;
         double undPrice;
 
         if (Double.isNaN(askPrice)&&(Double.isNaN(bidPrice))) {
@@ -65,16 +70,23 @@ public class ATMvolTracker extends AbstractJob {
             log("Calculating Underlying");
             undPrice = (undBidPrice + undAskPrice)/2;
         }
-        InstrumentDetails details = instruments().getInstrumentDetails(instrumentID);
-        String underlyingID = details.underlyingId;
-        Prices undTopOfBook = instruments().getTopOfBook(underlyingID);
-                log("Underlying ID is "+underlyingID+" , Underlying Bid is "+undTopOfBook.bid+", Underlying Ask is "+undTopOfBook.ask);
+        log("Underlying ID is "+underlyingID+" , Underlying Bid is "+undTopOfBook.bid+", Underlying Ask is "+undTopOfBook.ask);
         vol=theos().calculateImpliedVolatility(instrumentID, optPrice, undPrice);
         log("Found vol of "+vol+"using Underlying price of " +undPrice+"and Option price of " +optPrice);
 
         atmGrid.set(instrumentID, "ATM Vol", vol);
-    }
 
+        double MAlive;
+
+        if (n==1){
+            MAlive = vol;
+        }   else {
+            MAlive = atmGrid.getDouble(instrumentID, "ATM MA-Live");
+            MAlive = ((n-1)*MAlive + vol)/n;
+        }
+        n++;
+        atmGrid.set(instrumentID, "ATM MA-Live", MAlive);
+    }
 
 
 }
