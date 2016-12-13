@@ -1,6 +1,8 @@
 import com.optionscity.freeway.api.*;
 import com.optionscity.freeway.api.messages.TheoMessage;
 
+import java.util.LinkedList;
+
 /**
  * Created by demo01 on 11/17/2016.
  */
@@ -10,6 +12,8 @@ public class ATMvolTracker extends AbstractJob {
     double vol;
     private IGrid atmGrid;
     int n = 1;
+    LinkedList<Double> volData= new LinkedList<>();
+    int volDataSize = 10;
 
     public void install(IJobSetup iJobSetup) {
         iJobSetup.addVariable("Instrument", "Instrument to chart vols", "instrument", "");
@@ -19,7 +23,7 @@ public class ATMvolTracker extends AbstractJob {
         super.begin(container);
         container.subscribeToTheoMessages();
         instrumentID = instruments().getInstrumentId(container.getVariable("Instrument"));
-        atmGrid = container.addGrid("Vol Grid", new String[]{"ATM Vol", "ATM MA-Live"});
+        atmGrid = container.addGrid("Vol Grid", new String[]{"ATM Vol", "ATM MA-Live", "ATM MA10p"});
         atmGrid=container.getGrid("Vol Grid");
         atmGrid.clear();
         updateVol(instrumentID);
@@ -86,7 +90,30 @@ public class ATMvolTracker extends AbstractJob {
         }
         n++;
         atmGrid.set(instrumentID, "ATM MA-Live", MAlive);
+        addVol(vol);
+        double MA10p = getAvgVolOverTime();
+
+        atmGrid.set(instrumentID, "ATM MA10p", vol);
+
     }
 
+    private void addVol (double vol){
+        if (volData.size()==volDataSize){
+            volData.pop();
+        }
+        volData.add(vol);
+    }
+
+    private double getAvgVolOverTime() {
+        if (volData.size()<volDataSize){
+            return Double.NaN;
+        }
+
+        double sum = 0;
+        for (double vol : volData) {
+            sum += vol;
+        }
+        return sum/volDataSize;
+    }
 
 }
