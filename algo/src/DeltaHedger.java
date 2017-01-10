@@ -39,3 +39,5 @@ public class DeltaHedger extends AbstractJob {
 
     }
 }
+
+//Todo: get trade inst, get delta for that inst (From theo service), get traded qty, total trade delta = delta x qty, hedge as much as possible, store remainder to be hedged to a global var;
