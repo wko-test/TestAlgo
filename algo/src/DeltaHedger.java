@@ -1,28 +1,41 @@
 import com.optionscity.freeway.api.*;
-import com.sun.org.apache.xerces.internal.impl.dv.xs.DoubleDV;
-import com.sun.org.apache.xpath.internal.operations.String;
+import com.optionscity.freeway.api.messages.TradeMessage;
+
 
 /**
  * Created by demo01 on 1/3/2017.
  */
 public class DeltaHedger extends AbstractJob {
 
+
+    String instrumentMonth;
+
     public void install(IJobSetup iJobSetup) {
-        iJobSetup.addVariable()
-
-        public void begin (IContainer container){
-            super.begin(container);
-            container.subscribeToTheoMessages();
-            container.subscribeToTradeMessages();
-            instrumentIDs = instruments().getInstrumentIds(container.getVariable("Instruments"));
-        }
-
+        iJobSetup.addVariable("Instrument Month", "Instrument Month to Hedge", "String", "");
 
     }
-        private void updateDelta( String instrumentID ){
-            double initDelta;
-            double hedgeDelta;
-            Greeks(trades().getTrade().delta);
 
+    public void begin (IContainer container){
+        super.begin(container);
+        container.subscribeToTradeMessages();
+        instrumentMonth = getStringVar("Instrument Month");
+
+    }
+
+    public void onTrade (TradeMessage message){
+        InstrumentDetails details = instruments().getInstrumentDetails(message.instrumentId);
+        if (details.instrumentMonth.equals(instrumentMonth)){
+            hedge(message);
         }
+    }
+
+    private void hedge (TradeMessage message){}
+
+
+    private void updateDelta( String instrumentID ){
+        double initDelta;
+        double hedgeDelta;
+        Greeks(trades().getTrade().delta);
+
+    }
 }
